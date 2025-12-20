@@ -1,0 +1,171 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Transform: AWS::Serverless-2016-10-31
+Description: aws-lambda-python-convuser-runtime
+
+Parameters:
+  VpcSubnetIds:
+    Type: List<AWS::EC2::Subnet::Id>
+    Description: Lambdaを配置するサブネットID（複数可）
+  VpcId:
+    Type: AWS::EC2::VPC::Id
+    Description: VPCのID（エンドポイント/SG作成に使用）
+  RouteTableIds:
+    Type: CommaDelimitedList
+    Description: S3 Gatewayエンドポイントを関連付けるルートテーブルID（複数可、カンマ区切り）
+  CreateS3GatewayEndpoint:
+    Type: String
+    Default: "false"
+    AllowedValues:
+      - "true"
+      - "false"
+    Description: S3 Gateway VPC Endpoint を作成するかどうか（既存の場合は false）
+  S3GatewayEndpointId:
+    Type: String
+    Default: ""
+    Description: 既存の S3 Gateway VPC Endpoint ID (vpce-xxxxx)。CreateS3GatewayEndpoint が false の場合に使用。
+  CreateSsmInterfaceEndpoint:
+    Type: String
+    Default: "false"
+    AllowedValues:
+      - "true"
+      - "false"
+    Description: SSM Interface VPC Endpoint を作成するかどうか（既存の場合は false）
+  SsmVpcEndpointId:
+    Type: String
+    Default: ""
+    Description: 既存の SSM VPC Endpoint ID (vpce-xxxxx)。CreateSsmInterfaceEndpoint が false の場合に使用。
+
+Conditions:
+  CreateS3GatewayEndpointCondition: !Equals [ !Ref CreateS3GatewayEndpoint, "true" ]
+  CreateSsmInterfaceEndpointCondition: !Equals [ !Ref CreateSsmInterfaceEndpoint, "true" ]
+
+Resources:
+  ##########################################################################
+  # IAM ロール（Lambda用）                                                  #
+  ##########################################################################
+  LambdaLogonLogoffRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaVPCAccessExecutionRole
+      Policies:
+        - PolicyName: Lambda_LogonLogoffPolicy
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - ssm:GetParameter
+                Resource:
+                  - Fn::Sub: arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter/logonlogoff/*
+              - Effect: Allow
+                Action:
+                  - S3:Put*
+                Resource:
+                  - Fn::Sub: arn:aws:s3:::simtest-logonlogoff/*
+
+  ##########################################################################
+  # Lambda、VPC エンドポイント用 セキュリティグループ（Interface用）
+  ##########################################################################
+  LambdaSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Lambda outbound HTTPS only
+      VpcId: !Ref VpcId
+      SecurityGroupEgress:
+        - IpProtocol: tcp
+          FromPort: 443
+          ToPort: 443
+          CidrIp: 0.0.0.0/0
+
+  VpceSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Allow HTTPS from Lambda SG to Interface VPCE
+      VpcId: !Ref VpcId
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 443
+          ToPort: 443
+          SourceSecurityGroupId: !Ref LambdaSecurityGroup
+      SecurityGroupEgress:
+        - IpProtocol: -1
+          CidrIp: 0.0.0.0/0
+
+  ##########################################################################
+  # Lambda関数
+  ##########################################################################
+  ReciveLognLogoffFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: recieve_logonlogoff
+      PackageType: Zip
+      Handler: recieve_logonlogoff.recieve_logonlogoff
+      Runtime: python3.13
+      CodeUri: ./
+      Timeout: 900
+      MemorySize: 512
+      Role: !GetAtt LambdaLogonLogoffRole.Arn
+      Architectures:
+        - arm64
+      VpcConfig:
+        SubnetIds: !Ref VpcSubnetIds
+        SecurityGroupIds:
+          - !Ref LambdaSecurityGroup
+
+  ##########################################################################
+  # VPC エンドポイント（S3: Gateway、SSM: Interface）
+  ##########################################################################
+  S3GatewayEndpointResource:
+    Type: AWS::EC2::VPCEndpoint
+    Condition: CreateS3GatewayEndpointCondition
+    Properties:
+      VpcEndpointType: Gateway
+      VpcId: !Ref VpcId
+      ServiceName: !Sub com.amazonaws.${AWS::Region}.s3
+      RouteTableIds: !Ref RouteTableIds
+
+  SsmInterfaceEndpointResource:
+    Type: AWS::EC2::VPCEndpoint
+    Condition: CreateSsmInterfaceEndpointCondition
+    Properties:
+      VpcEndpointType: Interface
+      VpcId: !Ref VpcId
+      ServiceName: !Sub com.amazonaws.${AWS::Region}.ssm
+      SubnetIds: !Ref VpcSubnetIds
+      SecurityGroupIds:
+        - !Ref VpceSecurityGroup
+      PrivateDnsEnabled: true
+
+Outputs:
+  LambdaFunctionArn:
+    Description: Lambda Function ARN
+    Value: !GetAtt ReciveLognLogoffFunction.Arn
+    Export:
+      Name: !Sub "${AWS::StackName}:LambdaArn"
+  LambdaSecurityGroupId:
+    Description: Lambda Security Group ID
+    Value: !Ref LambdaSecurityGroup
+    Export:
+      Name: !Sub "${AWS::StackName}:LambdaSG"
+  S3VpcEndpointId:
+    Description: S3 Gateway VPC Endpoint ID (created or existing)
+    Value: !If
+      - CreateS3GatewayEndpointCondition
+      - !Ref S3GatewayEndpointResource
+      - !Ref S3GatewayEndpointId
+  SsmVpcEndpointId:
+    Description: SSM Interface VPC Endpoint ID (created or existing)
+    Value: !If
+      - CreateSsmInterfaceEndpointCondition
+      - !Ref SsmInterfaceEndpointResource
+      - !Ref SsmVpcEndpointId
+

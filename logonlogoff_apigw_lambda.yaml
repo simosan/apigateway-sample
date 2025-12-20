@@ -1,0 +1,242 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: Private API Gateway (REST) with Lambda proxy integration to receive POST data and forward to Lambda.
+
+Parameters:
+  ApiName:
+    Type: String
+    Default: logonlogoff-api
+    Description: Name of the API Gateway REST API.
+  StageName:
+    Type: String
+    Default: prod
+    Description: Deployment stage name.
+  VpcId:
+    Type: AWS::EC2::VPC::Id
+    Description: VPC ID where the Private API will be accessible.
+  SubnetIds:
+    Type: List<AWS::EC2::Subnet::Id>
+    Description: Private subnet IDs for the VPC endpoint (Interface type).
+  TargetLambdaArn:
+    Type: String
+    Description: ARN of the already-deployed Lambda function to integrate with API Gateway.
+  ClientCidr1:
+    Type: String
+    Default: ""
+  ClientCidr2:
+    Type: String
+    Default: ""
+  ClientCidr3:
+    Type: String
+    Default: ""
+  ClientSecurityGroupId:
+    Type: String
+    Default: ""
+  ExecuteApiVpcEndpoint:
+    Type: String
+    Default: "true"
+    Description: Whether to create execute-api VPC Endpoint (true or false). If false, provide existing VPCE ID in VpcEndpointId parameter.
+    AllowedValues:
+      - "true"
+      - "false"
+  VpcEndpointId:
+    Type: String
+    Default: ""
+    Description: Existing VPC Endpoint ID (vpce-xxxxx). Required if ExecuteApiVpcEndpoint is false.
+
+Conditions:
+  UseClientSG:
+    Fn::Not:
+      - Fn::Equals:
+          - Ref: ClientSecurityGroupId
+          - ""
+  UseCidr1:
+    Fn::Not:
+      - Fn::Equals: [ !Ref ClientCidr1, "" ]
+  UseCidr2:
+    Fn::Not:
+      - Fn::Equals: [ !Ref ClientCidr2, "" ]
+  UseCidr3:
+    Fn::Not:
+      - Fn::Equals: [ !Ref ClientCidr3, "" ]
+  CreateExecuteApiVpcEndpointCondition: !Equals [ !Ref ExecuteApiVpcEndpoint, "true" ]
+
+Resources:
+  # API Gateway が CloudWatch にログを書き込むための IAM ロール
+  ApiGatewayCloudWatchLogsRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: apigateway.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AmazonAPIGatewayPushToCloudWatchLogs
+
+  # API Gateway アカウント設定（リージョン単位）
+  ApiGatewayAccount:
+    Type: AWS::ApiGateway::Account
+    Properties:
+      CloudWatchRoleArn: !GetAtt ApiGatewayCloudWatchLogsRole.Arn
+
+  # VPC エンドポイントで制限したプライベート REST API（リソースポリシー適用）
+  RestApi:
+    Type: AWS::ApiGateway::RestApi
+    Properties:
+      Name: !Ref ApiName
+      EndpointConfiguration:
+        Types:
+          - PRIVATE
+        # 作成した execute-api VPCE と明示的に関連付け、Private DNS をこのエンドポイント経由で利用する
+        VpcEndpointIds:
+          - !If
+            - CreateExecuteApiVpcEndpointCondition
+            - !Ref ExecuteApiVpcEndpointResource
+            - !Ref VpcEndpointId
+      Policy:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal: "*"
+            Action: execute-api:Invoke
+            Resource: !Sub "arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:*/*/*/*"
+            Condition:
+              StringEquals:
+                aws:sourceVpce: !If
+                  - CreateExecuteApiVpcEndpointCondition
+                  - !Ref ExecuteApiVpcEndpointResource
+                  - !Ref VpcEndpointId
+
+  ApiRootResource:
+    Type: AWS::ApiGateway::Resource
+    Properties:
+      RestApiId: !Ref RestApi
+      ParentId: !GetAtt RestApi.RootResourceId
+      PathPart: logonlogoff
+
+  PostMethod:
+    Type: AWS::ApiGateway::Method
+    Properties:
+      RestApiId: !Ref RestApi
+      ResourceId: !Ref ApiRootResource
+      HttpMethod: POST
+      AuthorizationType: NONE
+      Integration:
+        Type: AWS_PROXY
+        IntegrationHttpMethod: POST
+        Uri: !Sub "arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${TargetLambdaArn}/invocations"
+      MethodResponses:
+        - StatusCode: 200
+
+  ApiDeployment:
+    Type: AWS::ApiGateway::Deployment
+    Properties:
+      RestApiId: !Ref RestApi
+    DependsOn:
+      - PostMethod
+
+  ApiStage:
+    Type: AWS::ApiGateway::Stage
+    DependsOn: ApiGatewayAccount
+    Properties:
+      RestApiId: !Ref RestApi
+      DeploymentId: !Ref ApiDeployment
+      StageName: !Ref StageName
+      MethodSettings:
+        - ResourcePath: "/*"
+          HttpMethod: "*"
+          LoggingLevel: INFO
+          MetricsEnabled: true
+          DataTraceEnabled: true
+      AccessLogSetting:
+        DestinationArn: !GetAtt ApiAccessLogGroup.Arn
+        Format: '{"requestId":"$context.requestId","extendedRequestId":"$context.extendedRequestId","sourceIp":"$context.identity.sourceIp","vpcEndpointId":"$context.identity.vpcEndpointId","userAgent":"$context.identity.userAgent","httpMethod":"$context.httpMethod","resourcePath":"$context.resourcePath","status":"$context.status","error":"$context.error.message","integrationStatus":"$context.integrationStatus","integrationLatency":"$context.integrationLatency"}'
+
+  ApiAccessLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub "/apigw/${ApiName}-${StageName}"
+      RetentionInDays: 7
+
+  # VPC 内からのみ到達できるようにするための execute-api 用 VPC エンドポイント
+  ExecuteApiVpcEndpointResource:
+    Type: AWS::EC2::VPCEndpoint
+    Condition: CreateExecuteApiVpcEndpointCondition
+    Properties:
+      VpcId: !Ref VpcId
+      ServiceName: !Sub "com.amazonaws.${AWS::Region}.execute-api"
+      VpcEndpointType: Interface
+      PrivateDnsEnabled: true
+      SubnetIds: !Ref SubnetIds
+      SecurityGroupIds:
+        - !Ref ExecuteApiEndpointSG
+
+  ExecuteApiEndpointSG:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Security Group for API Gateway execute-api VPC Endpoint (allow HTTPS from clients)
+      VpcId: !Ref VpcId
+      SecurityGroupEgress:
+        - IpProtocol: -1
+          CidrIp: 0.0.0.0/0
+
+  EndpointSGIngressFromClientSG:
+    Type: AWS::EC2::SecurityGroupIngress
+    Condition: UseClientSG
+    Properties:
+      GroupId: !Ref ExecuteApiEndpointSG
+      IpProtocol: tcp
+      FromPort: 443
+      ToPort: 443
+      SourceSecurityGroupId: !Ref ClientSecurityGroupId
+
+  EndpointSGIngressFromCidr1:
+    Type: AWS::EC2::SecurityGroupIngress
+    Condition: UseCidr1
+    Properties:
+      GroupId: !Ref ExecuteApiEndpointSG
+      IpProtocol: tcp
+      FromPort: 443
+      ToPort: 443
+      CidrIp: !Ref ClientCidr1
+
+  EndpointSGIngressFromCidr2:
+    Type: AWS::EC2::SecurityGroupIngress
+    Condition: UseCidr2
+    Properties:
+      GroupId: !Ref ExecuteApiEndpointSG
+      IpProtocol: tcp
+      FromPort: 443
+      ToPort: 443
+      CidrIp: !Ref ClientCidr2
+
+  EndpointSGIngressFromCidr3:
+    Type: AWS::EC2::SecurityGroupIngress
+    Condition: UseCidr3
+    Properties:
+      GroupId: !Ref ExecuteApiEndpointSG
+      IpProtocol: tcp
+      FromPort: 443
+      ToPort: 443
+      CidrIp: !Ref ClientCidr3
+
+Outputs:
+  ApiId:
+    Description: REST API ID
+    Value: !Ref RestApi
+    Export:
+      Name: !Sub "${ApiName}:ApiId"
+  ApiInvokeURL:
+    Description: Private API Invoke URL (usable from VPC via VPCE)
+    Value: !Sub "https://${RestApi}.execute-api.${AWS::Region}.amazonaws.com/${StageName}/logonlogoff"
+  VpcEndpointId:
+    Description: Execute API VPC Endpoint ID
+    Value: !If
+      - CreateExecuteApiVpcEndpointCondition
+      - !Ref ExecuteApiVpcEndpointResource
+      - !Ref VpcEndpointId
+  VpcEndpointSecurityGroupId:
+    Description: Security Group ID attached to the VPC Endpoint
+    Value: !Ref ExecuteApiEndpointSG
