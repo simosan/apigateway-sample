@@ -1,3 +1,4 @@
 .env
 samconfig.toml
 work/
+.DS_Store

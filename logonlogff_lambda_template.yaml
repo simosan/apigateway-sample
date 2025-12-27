@@ -29,11 +29,16 @@ Parameters:
     AllowedValues:
       - "true"
       - "false"
+      - "false2"
     Description: SSM Interface VPC Endpoint を作成するかどうか（既存の場合は false）
   SsmVpcEndpointId:
     Type: String
     Default: ""
     Description: 既存の SSM VPC Endpoint ID (vpce-xxxxx)。CreateSsmInterfaceEndpoint が false の場合に使用。
+  BucketName:
+    Type: String
+    Default: ""
+    Description: ログ保存先のS3バケット名
 
 Conditions:
   CreateS3GatewayEndpointCondition: !Equals [ !Ref CreateS3GatewayEndpoint, "true" ]
@@ -110,6 +115,9 @@ Resources:
       PackageType: Zip
       Handler: recieve_logonlogoff.recieve_logonlogoff
       Runtime: python3.13
+      Environment:
+        Variables:
+          bucket_name: !Ref BucketName
       CodeUri: ./
       Timeout: 900
       MemorySize: 512

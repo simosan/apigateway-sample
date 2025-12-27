@@ -1,7 +1,10 @@
+import os
 import boto3
 import json
 import datetime
 import re
+import socket
+import urllib.request
 
 
 def compute_base_date_str(timestamp_str: str) -> str:
@@ -24,17 +27,17 @@ def compute_base_date_str(timestamp_str: str) -> str:
     return base_date.strftime("%Y%m%d")
 
 
-def get_bucket_name(ssm_client) -> str:
-    """SSMまたは環境変数からS3バケット名を取得する。"""
-    # SSM Parameter Storeから取得
-    resp = ssm_client.get_parameter(Name='/logonlogoff/s3bucket', WithDecryption=False)
-    return resp['Parameter']['Value']
-
-
-def get_prefix(ssm_client) -> str:
-    """S3キーの先頭プレフィックスを取得する"""
-    resp = ssm_client.get_parameter(Name='/logonlogoff/prefixkey', WithDecryption=False)
-    return resp['Parameter']['Value']
+#def get_bucket_name(ssm_client) -> str:
+#    """SSMまたは環境変数からS3バケット名を取得する。"""
+#    # SSM Parameter Storeから取得
+#    resp = ssm_client.get_parameter(Name='/logonlogoff/s3bucket', WithDecryption=False)
+#    return resp['Parameter']['Value']
+#
+#
+#def get_prefix(ssm_client) -> str:
+#    """S3キーの先頭プレフィックスを取得する"""
+#    resp = ssm_client.get_parameter(Name='/logonlogoff/prefixkey', WithDecryption=False)
+#    return resp['Parameter']['Value']
 
 
 def parse_event_payload(event: dict) -> dict:
@@ -58,6 +61,14 @@ def parse_event_payload(event: dict) -> dict:
 
 
 def recieve_logonlogoff(event, context):
+
+   # # LambdaマシンのIPアドレスを取得して出力
+   # try:
+   #     hostname = socket.gethostname()
+   #     local_ip = socket.gethostbyname(hostname)
+   #     print(f"Lambda Local IP Address: {local_ip}")
+   # except Exception as e:
+   #     print(f"Failed to get local IP address: {e}")
 
     # boto3クライアント（ローカルDRY_RUN時は未インストールでも動作可能）
     s3 = boto3.client('s3')
@@ -156,7 +167,8 @@ def recieve_logonlogoff(event, context):
         }
 
     # S3キー生成: <prefix>/date=yyyyMMdd/<userid>_<type>_<timestamp>.json
-    prefix = get_prefix(ssm)
+    # prefix = get_prefix(ssm)
+    prefix = "logonlogoff"
     # ファイル名用にタイムスタンプを変換
     safe_ts = timestamp.replace(' ', 'T').replace(':', '-')
     object_key = f"{prefix}/date={date_str}/{userid}_{log_type}_{safe_ts}.json"
@@ -169,7 +181,8 @@ def recieve_logonlogoff(event, context):
     }
 
     # バケット名取得
-    bucket_name = get_bucket_name(ssm)
+    # bucket_name = get_bucket_name(ssm)
+    bucket_name = os.environ.get("bucket_name", "")
 
     try:
         # S3へ保存

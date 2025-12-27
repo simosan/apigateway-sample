@@ -54,6 +54,8 @@ if [[ $# -lt 1 ]]; then
   exit 1
 fi
 
+source .env
+
 CMD=$1
 shift || true
 
@@ -106,19 +108,22 @@ case "$CMD" in
       CreateS3GatewayEndpoint="$CREATE_S3_ENDPOINT_VAL"
       S3GatewayEndpointId="${S3_VPCE_ID_VAL}"
       CreateSsmInterfaceEndpoint="$CREATE_SSM_ENDPOINT_VAL"
+      BucketName="${BUCKET_NAME}" # .envから追加
     )
 
     [[ "$CREATE_SSM_ENDPOINT_VAL" == "false" ]] && PARAMS+=(SsmVpcEndpointId="${SSM_VPCE_ID_VAL}")
+    [[ "$CREATE_SSM_ENDPOINT_VAL" == "false2" ]]
 
     sam deploy \
       --stack-name "$STACK_NAME_VAL" \
-      --template-file "./logonlogff_lambda_template.yml" \
+      --template-file "./logonlogff_lambda_template.yaml" \
       --region "${REGION:-ap-northeast-1}" \
       --profile "${PROFILE:-default}" \
       --parameter-overrides "${PARAMS[@]}"
     ;;
   delete)
     sam delete \
+      --stack-name "$LAMBDA_STACK_NAME" \
       --no-prompts \
       --region "${REGION:-ap-northeast-1}" \
       --profile "${PROFILE:-default}"
