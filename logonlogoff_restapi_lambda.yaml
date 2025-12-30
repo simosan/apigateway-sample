@@ -102,6 +102,7 @@ Resources:
             Principal: "*"
             Action: execute-api:Invoke
             Resource: !Sub "arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:*/*/*/*"
+            # API Gateway へのアクセスを VPC エンドポイント経由に制限
             Condition:
               StringEquals:
                 aws:sourceVpce: !If
