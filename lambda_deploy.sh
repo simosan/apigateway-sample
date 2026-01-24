@@ -112,11 +112,11 @@ case "$CMD" in
     )
 
     [[ "$CREATE_SSM_ENDPOINT_VAL" == "false" ]] && PARAMS+=(SsmVpcEndpointId="${SSM_VPCE_ID_VAL}")
-    [[ "$CREATE_SSM_ENDPOINT_VAL" == "false2" ]]
+    [[ "$CREATE_SSM_ENDPOINT_VAL" == "false2" ]] && PARAMS[2]="CreateSsmInterfaceEndpoint=false"
 
     sam deploy \
       --stack-name "$STACK_NAME_VAL" \
-      --template-file "./logonlogff_lambda_template.yaml" \
+      --template-file "./logonlogoff_lambda_template.yaml" \
       --region "${REGION:-ap-northeast-1}" \
       --profile "${PROFILE:-default}" \
       --parameter-overrides "${PARAMS[@]}"
