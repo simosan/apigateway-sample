@@ -108,7 +108,10 @@ case "$CMD" in
       CreateS3GatewayEndpoint="$CREATE_S3_ENDPOINT_VAL"
       S3GatewayEndpointId="${S3_VPCE_ID_VAL}"
       CreateSsmInterfaceEndpoint="$CREATE_SSM_ENDPOINT_VAL"
-      BucketName="${BUCKET_NAME}" # .envから追加
+      BucketName="${BUCKET_NAME}"
+      LambdaSecurityGroup="${LAMBDA_SECURITY_GROUP}"
+      VpceSecurityGroup="${VPCE_SECURITY_GROUP}"
+      LambdaLogonLogoffRoleArn="${LAMBDA_ROLE_ARN}"
     )
 
     [[ "$CREATE_SSM_ENDPOINT_VAL" == "false" ]] && PARAMS+=(SsmVpcEndpointId="${SSM_VPCE_ID_VAL}")

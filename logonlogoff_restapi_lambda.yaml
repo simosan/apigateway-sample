@@ -19,18 +19,6 @@ Parameters:
   TargetLambdaArn:
     Type: String
     Description: ARN of the already-deployed Lambda function to integrate with API Gateway.
-  ClientCidr1:
-    Type: String
-    Default: ""
-  ClientCidr2:
-    Type: String
-    Default: ""
-  ClientCidr3:
-    Type: String
-    Default: ""
-  ClientSecurityGroupId:
-    Type: String
-    Default: ""
   ExecuteApiVpcEndpoint:
     Type: String
     Default: "true"
@@ -42,44 +30,24 @@ Parameters:
     Type: String
     Default: ""
     Description: Existing VPC Endpoint ID (vpce-xxxxx). Required if ExecuteApiVpcEndpoint is false.
+  ExecuteApiEndpointSG:
+    Type: String
+    Default: ""
+    Description: Security Group ID to attach to the execute-api VPC Endpoint (if created). Should allow inbound HTTPS (443) from clients.
+  ApiGatewayCloudWatchLogsRoleArn:
+    Type: String
+    Default: ""
+    Description: ARN of the IAM Role that API Gateway will assume to write logs to CloudWatch. This role must have the AmazonAPIGatewayPushToCloudWatchLogs managed policy attached.
 
 Conditions:
-  UseClientSG:
-    Fn::Not:
-      - Fn::Equals:
-          - Ref: ClientSecurityGroupId
-          - ""
-  UseCidr1:
-    Fn::Not:
-      - Fn::Equals: [ !Ref ClientCidr1, "" ]
-  UseCidr2:
-    Fn::Not:
-      - Fn::Equals: [ !Ref ClientCidr2, "" ]
-  UseCidr3:
-    Fn::Not:
-      - Fn::Equals: [ !Ref ClientCidr3, "" ]
   CreateExecuteApiVpcEndpointCondition: !Equals [ !Ref ExecuteApiVpcEndpoint, "true" ]
 
 Resources:
-  # API Gateway が CloudWatch にログを書き込むための IAM ロール
-  ApiGatewayCloudWatchLogsRole:
-    Type: AWS::IAM::Role
-    Properties:
-      AssumeRolePolicyDocument:
-        Version: '2012-10-17'
-        Statement:
-          - Effect: Allow
-            Principal:
-              Service: apigateway.amazonaws.com
-            Action: sts:AssumeRole
-      ManagedPolicyArns:
-        - arn:aws:iam::aws:policy/service-role/AmazonAPIGatewayPushToCloudWatchLogs
-
   # API Gateway アカウント設定（リージョン単位）
   ApiGatewayAccount:
     Type: AWS::ApiGateway::Account
     Properties:
-      CloudWatchRoleArn: !GetAtt ApiGatewayCloudWatchLogsRole.Arn
+      CloudWatchRoleArn: !Ref ApiGatewayCloudWatchLogsRoleArn
 
   # VPC エンドポイントで制限したプライベート REST API（リソースポリシー適用）
   RestApi:
@@ -159,7 +127,7 @@ Resources:
     Type: AWS::Logs::LogGroup
     Properties:
       LogGroupName: !Sub "/apigw/${ApiName}-${StageName}"
-      RetentionInDays: 7
+      RetentionInDays: 30
 
   # VPC 内からのみ到達できるようにするための execute-api 用 VPC エンドポイント
   ExecuteApiVpcEndpointResource:
@@ -173,55 +141,6 @@ Resources:
       SubnetIds: !Ref SubnetIds
       SecurityGroupIds:
         - !Ref ExecuteApiEndpointSG
-
-  ExecuteApiEndpointSG:
-    Type: AWS::EC2::SecurityGroup
-    Properties:
-      GroupDescription: Security Group for API Gateway execute-api VPC Endpoint (allow HTTPS from clients)
-      VpcId: !Ref VpcId
-      SecurityGroupEgress:
-        - IpProtocol: -1
-          CidrIp: 0.0.0.0/0
-
-  EndpointSGIngressFromClientSG:
-    Type: AWS::EC2::SecurityGroupIngress
-    Condition: UseClientSG
-    Properties:
-      GroupId: !Ref ExecuteApiEndpointSG
-      IpProtocol: tcp
-      FromPort: 443
-      ToPort: 443
-      SourceSecurityGroupId: !Ref ClientSecurityGroupId
-
-  EndpointSGIngressFromCidr1:
-    Type: AWS::EC2::SecurityGroupIngress
-    Condition: UseCidr1
-    Properties:
-      GroupId: !Ref ExecuteApiEndpointSG
-      IpProtocol: tcp
-      FromPort: 443
-      ToPort: 443
-      CidrIp: !Ref ClientCidr1
-
-  EndpointSGIngressFromCidr2:
-    Type: AWS::EC2::SecurityGroupIngress
-    Condition: UseCidr2
-    Properties:
-      GroupId: !Ref ExecuteApiEndpointSG
-      IpProtocol: tcp
-      FromPort: 443
-      ToPort: 443
-      CidrIp: !Ref ClientCidr2
-
-  EndpointSGIngressFromCidr3:
-    Type: AWS::EC2::SecurityGroupIngress
-    Condition: UseCidr3
-    Properties:
-      GroupId: !Ref ExecuteApiEndpointSG
-      IpProtocol: tcp
-      FromPort: 443
-      ToPort: 443
-      CidrIp: !Ref ClientCidr3
 
 Outputs:
   ApiId:
@@ -238,6 +157,3 @@ Outputs:
       - CreateExecuteApiVpcEndpointCondition
       - !Ref ExecuteApiVpcEndpointResource
       - !Ref VpcEndpointId
-  VpcEndpointSecurityGroupId:
-    Description: Security Group ID attached to the VPC Endpoint
-    Value: !Ref ExecuteApiEndpointSG

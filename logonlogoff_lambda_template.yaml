@@ -39,72 +39,25 @@ Parameters:
     Type: String
     Default: ""
     Description: ログ保存先のS3バケット名
+  LambdaSecurityGroup:
+    Type: String
+    Default: ""
+    Description: Lambda関数にアタッチするセキュリティグループ
+  VpceSecurityGroup:
+    Type: String
+    Default: ""
+    Description: VPCエンドポイントにアタッチするセキュリティグループ
+  LambdaLogonLogoffRoleArn:
+    Type: String
+    Default: ""
+    Description: Lambda関数に使用するIAMロールのARN
+
 
 Conditions:
   CreateS3GatewayEndpointCondition: !Equals [ !Ref CreateS3GatewayEndpoint, "true" ]
   CreateSsmInterfaceEndpointCondition: !Equals [ !Ref CreateSsmInterfaceEndpoint, "true" ]
 
 Resources:
-  ##########################################################################
-  # IAM ロール（Lambda用）                                                  #
-  ##########################################################################
-  LambdaLogonLogoffRole:
-    Type: AWS::IAM::Role
-    Properties:
-      AssumeRolePolicyDocument:
-        Version: '2012-10-17'
-        Statement:
-          - Effect: Allow
-            Principal:
-              Service: lambda.amazonaws.com
-            Action: sts:AssumeRole
-      ManagedPolicyArns:
-        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
-        - arn:aws:iam::aws:policy/service-role/AWSLambdaVPCAccessExecutionRole
-      Policies:
-        - PolicyName: Lambda_LogonLogoffPolicy
-          PolicyDocument:
-            Version: '2012-10-17'
-            Statement:
-              - Effect: Allow
-                Action:
-                  - ssm:GetParameter
-                Resource:
-                  - Fn::Sub: arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter/logonlogoff/*
-              - Effect: Allow
-                Action:
-                  - S3:Put*
-                Resource:
-                  - Fn::Sub: arn:aws:s3:::simtest-logonlogoff/*
-
-  ##########################################################################
-  # Lambda、VPC エンドポイント用 セキュリティグループ（Interface用）
-  ##########################################################################
-  LambdaSecurityGroup:
-    Type: AWS::EC2::SecurityGroup
-    Properties:
-      GroupDescription: Lambda outbound HTTPS only
-      VpcId: !Ref VpcId
-      SecurityGroupEgress:
-        - IpProtocol: tcp
-          FromPort: 443
-          ToPort: 443
-          CidrIp: 0.0.0.0/0
-
-  VpceSecurityGroup:
-    Type: AWS::EC2::SecurityGroup
-    Properties:
-      GroupDescription: Allow HTTPS from Lambda SG to Interface VPCE
-      VpcId: !Ref VpcId
-      SecurityGroupIngress:
-        - IpProtocol: tcp
-          FromPort: 443
-          ToPort: 443
-          SourceSecurityGroupId: !Ref LambdaSecurityGroup
-      SecurityGroupEgress:
-        - IpProtocol: -1
-          CidrIp: 0.0.0.0/0
-
   ##########################################################################
   # Lambda関数
   ##########################################################################
@@ -121,7 +74,7 @@ Resources:
       CodeUri: ./
       Timeout: 900
       MemorySize: 512
-      Role: !GetAtt LambdaLogonLogoffRole.Arn
+      Role: !Ref LambdaLogonLogoffRoleArn
       Architectures:
         - arm64
       VpcConfig:

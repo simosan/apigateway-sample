@@ -26,11 +26,6 @@ ensure_lambda_permission() {
 # API Gatewayデプロイ
 deploy_apigateway() {
   ensure_lambda_permission
-  # IPセグメント取得(xxx.xxx.xxx.xxx/xx,xxx.xxx.xxx.xxx/xx,xxx.xxx.xxx.xxx/xx)
-  # IPセグメントはスペース/カンマ区切り両対応でカンマに正規化
-  # IPの数は最大3つまで対応
-  NORMALIZED_SEGMENTS=$(echo "$IPSEGMENT" | tr ' ' ',' | tr -s ',')
-  IFS=',' read -r CIDR1 CIDR2 CIDR3 _ <<< "$NORMALIZED_SEGMENTS"
 
   EXECUTE_API_VPCE_CREATE_VAL="${EXECUTE_API_VPCE_CREATE:-true}"
   if [ "$EXECUTE_API_VPCE_CREATE_VAL" = "false" ] && [ -z "${EXECUTE_API_VPCE_ID:-}" ]; then
@@ -43,12 +38,11 @@ deploy_apigateway() {
     VpcId="$VPCID"
     SubnetIds="$SUBNETIDS"
     ExecuteApiVpcEndpoint="$EXECUTE_API_VPCE_CREATE_VAL"
+    LambdaSecurityGroupId="$LAMBDA_SECURITY_GROUP"
+    ExecuteApiEndpointSG="$EXECUTE_API_ENDPOINT_SG"
+    ApiGatewayCloudWatchLogsRoleArn="$APIGW_CLOUDWATCH_LOGS_ROLE_ARN"
   )
   [ -n "${EXECUTE_API_VPCE_ID:-}" ] && PARAMS+=(VpcEndpointId="$EXECUTE_API_VPCE_ID")
-  [ -n "${CLIENT_VPN_SG_ID:-}" ] && PARAMS+=(ClientSecurityGroupId="$CLIENT_VPN_SG_ID")
-  [ -n "${CIDR1:-}" ] && PARAMS+=(ClientCidr1="$CIDR1")
-  [ -n "${CIDR2:-}" ] && PARAMS+=(ClientCidr2="$CIDR2")
-  [ -n "${CIDR3:-}" ] && PARAMS+=(ClientCidr3="$CIDR3")
 
   sam deploy \
     --stack-name "$STACK_NAME" \
